@@ -100,8 +100,13 @@ export interface DailyPlan {
   date: Date;
   tasks: Task[];
   calendarBlocks: CalendarBlock[];
+  reminders: Reminder[];
+  conflicts: TimeConflict[];
   totalEstimatedMinutes: number;
+  totalScheduledMinutes: number;
+  freeMinutes: number;
   focusScore: number;
+  suggestions: string[];
 }
 
 export interface CheckInRecord {
@@ -211,4 +216,19 @@ export interface SDKOptions {
   workDays?: number[];
   defaultEstimatedMinutes?: number;
   reminderLeadMinutes?: number;
+}
+
+export interface BatchActionResult {
+  success: boolean;
+  results: {
+    actionIndex: number;
+    actionType: string;
+    success: boolean;
+    data?: any;
+    error?: string;
+  }[];
+  finalPlan?: PlanningResult;
+  summary?: ExportSummary;
+  totalSuccess: number;
+  totalFailed: number;
 }

@@ -23,10 +23,10 @@ import {
   UserAction,
   Priority,
   TaskStatus,
-  RepeatFrequency,
+  BatchActionResult,
 } from '../types';
 
-import { addDays, startOfDay, sortTasksByPriority, formatDate } from '../utils';
+import { addDays, sortTasksByPriority, startOfWeek, endOfWeek } from '../utils';
 
 export class EfficiencySDK {
   private taskManager: TaskManager;
@@ -93,10 +93,11 @@ export class EfficiencySDK {
     date: Date;
     tasks?: Task[];
     days?: number;
+    autoSchedule?: boolean;
+    generateReminders?: boolean;
   }): PlanningResult {
-    const { date, days = 1 } = params;
+    const { date, days = 1, autoSchedule = true, generateReminders = true } = params;
 
-    let allTasks: Task[];
     if (params.tasks) {
       params.tasks.forEach((t) => {
         if (!this.taskManager.getTask(t.id)) {
@@ -111,67 +112,64 @@ export class EfficiencySDK {
           });
         }
       });
-      allTasks = this.taskManager.getAllTasks();
-    } else {
-      allTasks = this.taskManager.getAllTasks();
     }
 
+    const allTasks = this.taskManager.getAllTasks();
+
+    if (autoSchedule) {
+      this.autoScheduleTasks(allTasks, date, days);
+    }
+
+    if (generateReminders) {
+      this.generateAllReminders(allTasks);
+    }
+
+    const allCalendarBlocks = this.calendarManager.getAllBlocks();
+    const allReminders = this.reminderManager.getAllReminders();
+    const allConflicts = this.calendarManager.detectConflicts();
+
     const dailyPlans: DailyPlan[] = [];
-    const allCalendarBlocks: CalendarBlock[] = [];
-    const allReminders: Reminder[] = [];
-    const allConflicts: TimeConflict[] = [];
     const suggestions: string[] = [];
 
     for (let i = 0; i < days; i++) {
       const planDate = addDays(date, i);
+      const dayConflicts = allConflicts.filter((c) => {
+        const block1 = c.block1 as any;
+        const block2 = c.block2 as any;
+        const time1 = block1.startTime || block1.dueDate;
+        const time2 = block2.startTime || block2.dueDate;
+        return (time1 && this.isSameDay(time1, planDate)) ||
+               (time2 && this.isSameDay(time2, planDate));
+      });
+
       const dayPlan = this.statisticsManager.generateDailyPlan(
         planDate,
         allTasks,
-        this.calendarManager.getAllBlocks()
-      );
-      dailyPlans.push(dayPlan);
-
-      dayPlan.tasks.forEach((task) => {
-        if (task.calendarBlockIds.length === 0) {
-          const block = this.calendarManager.scheduleTaskBlock(
-            task,
-            planDate,
-            this.options.workStartTime,
-            this.options.workEndTime
-          );
-          if (block) {
-            this.taskManager.updateTask(task.id, {
-              calendarBlockIds: [...task.calendarBlockIds, block.id],
-            });
-          }
+        allCalendarBlocks,
+        {
+          reminders: allReminders,
+          conflicts: dayConflicts,
+          workStartTime: this.options.workStartTime,
+          workEndTime: this.options.workEndTime,
         }
-      });
+      );
 
-      const dayBlocks = this.calendarManager.getBlocksForDate(planDate);
-      allCalendarBlocks.push(...dayBlocks);
-
-      const conflicts = this.calendarManager.detectConflicts();
-      allConflicts.push(...conflicts);
-
-      dayPlan.tasks.forEach((task) => {
-        const taskReminders = this.reminderManager.generateRemindersForTask(task, {
-          startReminder: true,
-          dueReminder: true,
-          leadMinutes: this.options.reminderLeadMinutes,
-        });
-        allReminders.push(...taskReminders);
-      });
+      dailyPlans.push(dayPlan);
     }
 
     if (allConflicts.length > 0) {
       suggestions.push(`检测到 ${allConflicts.length} 个时间冲突，建议重新安排日程。`);
     }
 
-    const highPriorityCount = dailyPlans[0]?.tasks.filter(
+    const firstDayPlan = dailyPlans[0];
+    if (firstDayPlan && firstDayPlan.tasks.filter(
       (t) => t.priority === 'high' || t.priority === 'urgent'
-    ).length;
-    if (highPriorityCount && highPriorityCount > 5) {
+    ).length > 5) {
       suggestions.push('今日高优先级任务较多，注意合理分配精力。');
+    }
+
+    if (firstDayPlan && firstDayPlan.freeMinutes < 60 && firstDayPlan.freeMinutes > 0) {
+      suggestions.push('今日日程较满，建议预留休息时间避免疲劳。');
     }
 
     const totalEstimated = dailyPlans.reduce((sum, p) => sum + p.totalEstimatedMinutes, 0);
@@ -190,22 +188,101 @@ export class EfficiencySDK {
     };
   }
 
-  handleAction(action: UserAction): PlanningResult | any {
-    const { type, payload, timestamp } = action;
+  private autoScheduleTasks(tasks: Task[], startDate: Date, days: number): void {
+    const pendingTasks = tasks.filter(
+      (t) => t.status !== 'completed' && t.status !== 'cancelled'
+    );
+
+    const sortedTasks = sortTasksByPriority(pendingTasks);
+
+    for (let i = 0; i < days; i++) {
+      const planDate = addDays(startDate, i);
+
+      for (const task of sortedTasks) {
+        const hasBlock = task.calendarBlockIds.length > 0;
+        const isForDay = (task.dueDate && this.isSameDay(task.dueDate, planDate)) ||
+                         (task.startDate && this.isSameDay(task.startDate, planDate));
+
+        if (!hasBlock && isForDay) {
+          const block = this.calendarManager.scheduleTaskBlock(
+            task,
+            planDate,
+            this.options.workStartTime,
+            this.options.workEndTime
+          );
+
+          if (block) {
+            this.taskManager.updateTask(task.id, {
+              calendarBlockIds: [...task.calendarBlockIds, block.id],
+            });
+          }
+        }
+      }
+    }
+  }
+
+  private generateAllReminders(tasks: Task[]): void {
+    tasks.forEach((task) => {
+      const existingReminders = this.reminderManager.getRemindersByTask(task.id);
+      if (existingReminders.length === 0 && (task.dueDate || task.startDate)) {
+        this.reminderManager.generateRemindersForTask(task, {
+          startReminder: true,
+          dueReminder: true,
+          leadMinutes: this.options.reminderLeadMinutes,
+        });
+      }
+    });
+
+    const blocks = this.calendarManager.getAllBlocks();
+    blocks.forEach((block) => {
+      const existingReminders = this.reminderManager.getRemindersByCalendarBlock(block.id);
+      if (existingReminders.length === 0) {
+        this.reminderManager.generateCalendarReminder(block, this.options.reminderLeadMinutes);
+      }
+    });
+  }
+
+  private isSameDay(date1: Date, date2: Date): boolean {
+    return (
+      date1.getFullYear() === date2.getFullYear() &&
+      date1.getMonth() === date2.getMonth() &&
+      date1.getDate() === date2.getDate()
+    );
+  }
+
+  handleAction(action: UserAction): any {
+    try {
+      return this.executeAction(action);
+    } catch (e: any) {
+      return { success: false, error: e.message };
+    }
+  }
+
+  private executeAction(action: UserAction): any {
+    const { type, payload } = action;
 
     switch (type) {
-      case 'create_task':
-        return this.taskManager.createTask(payload as any);
+      case 'create_task': {
+        const task = this.taskManager.createTask(payload as any);
+        if (payload.autoSchedule && task.dueDate) {
+          this.plan({ date: task.dueDate, days: 1 });
+        }
+        return { success: true, data: task };
+      }
 
-      case 'complete_task':
+      case 'complete_task': {
         this.taskManager.setTaskStatus(payload.taskId, 'completed');
         this.updateGoalProgress();
-        return this.taskManager.getTask(payload.taskId);
+        const task = this.taskManager.getTask(payload.taskId);
+        return { success: true, data: task };
+      }
 
-      case 'defer_task':
-        return this.taskManager.deferTask(payload.taskId, payload.deferredTo, payload.reason);
+      case 'defer_task': {
+        const task = this.taskManager.deferTask(payload.taskId, payload.deferredTo, payload.reason);
+        return { success: true, data: task };
+      }
 
-      case 'schedule_task':
+      case 'schedule_task': {
         const block = this.calendarManager.scheduleTaskBlock(
           payload.task,
           payload.date,
@@ -221,47 +298,55 @@ export class EfficiencySDK {
           }
           this.reminderManager.generateCalendarReminder(block);
         }
-        return block;
+        return { success: true, data: block };
+      }
 
-      case 'check_in':
-        return this.statisticsManager.checkIn(payload as any);
+      case 'check_in': {
+        if (payload.completedTasks) {
+          payload.completedTasks.forEach((taskId: string) => {
+            this.taskManager.setTaskStatus(taskId, 'completed');
+          });
+        }
+        this.updateGoalProgress();
+        const result = this.statisticsManager.checkIn(payload as any);
+        return { success: true, data: result };
+      }
 
-      case 'create_goal':
-        return this.goalManager.createGoal(payload as any);
+      case 'create_goal': {
+        const goal = this.goalManager.createGoal(payload as any);
+        return { success: true, data: goal };
+      }
 
-      case 'apply_template':
-        const templateTasks = this.templateManager.applyTemplate(
+      case 'apply_template': {
+        const createdTasks = this.applyTemplateToTasks(
           payload.templateId,
           payload.startDate || new Date(),
           {
             goalId: payload.goalId,
+            parentTaskId: payload.parentTaskId,
             tagOverrides: payload.tagOverrides,
           }
         );
-        const createdTasks: Task[] = [];
-        templateTasks.forEach((t) => {
-          const task = this.taskManager.createTask({
-            title: t.title,
-            description: t.description,
-            priority: t.priority,
-            estimatedMinutes: t.estimatedMinutes,
-            dueDate: t.dueDate,
-            tags: t.tags,
-            goalId: t.goalId,
-          });
-          createdTasks.push(task);
-        });
-        return createdTasks;
 
-      case 'generate_weekly_review':
-        return this.reviewManager.generateWeeklyReview(
+        if (payload.autoPlan && createdTasks.length > 0) {
+          const firstTaskDate = createdTasks[0].dueDate || new Date();
+          this.plan({ date: firstTaskDate, days: payload.planDays || 1 });
+        }
+
+        return { success: true, data: createdTasks };
+      }
+
+      case 'generate_weekly_review': {
+        const review = this.reviewManager.generateWeeklyReview(
           payload.date || new Date(),
           this.taskManager.getAllTasks(),
           this.goalManager.getAllGoals()
         );
+        return { success: true, data: review };
+      }
 
-      case 'generate_summary':
-        return this.templateManager.generateExportSummary(
+      case 'generate_summary': {
+        const summary = this.templateManager.generateExportSummary(
           payload.startDate,
           payload.endDate,
           this.taskManager.getAllTasks(),
@@ -272,33 +357,154 @@ export class EfficiencySDK {
             status: g.status,
           }))
         );
+        return { success: true, data: summary };
+      }
 
-      case 'get_plan':
-        return this.plan({
+      case 'get_plan': {
+        const plan = this.plan({
           date: payload.date || new Date(),
           days: payload.days || 1,
         });
+        return { success: true, data: plan };
+      }
 
       default:
-        return { error: `Unknown action type: ${type}` };
+        return { success: false, error: `Unknown action type: ${type}` };
     }
   }
 
-  getTodayPlan(): DailyPlan {
-    return this.statisticsManager.generateDailyPlan(
-      new Date(),
-      this.taskManager.getAllTasks(),
-      this.calendarManager.getAllBlocks()
+  private applyTemplateToTasks(
+    templateId: string,
+    startDate: Date,
+    options?: {
+      goalId?: string;
+      parentTaskId?: string;
+      tagOverrides?: string[];
+    }
+  ): Task[] {
+    const templateTasks = this.templateManager.applyTemplate(
+      templateId,
+      startDate,
+      options
     );
+
+    const createdTasks: Task[] = [];
+    templateTasks.forEach((t) => {
+      const task = this.taskManager.createTask({
+        title: t.title,
+        description: t.description,
+        priority: t.priority,
+        estimatedMinutes: t.estimatedMinutes,
+        dueDate: t.dueDate,
+        startDate: t.startDate,
+        tags: t.tags,
+        steps: t.steps.map((s) => s.title),
+        repeatFrequency: t.repeatFrequency,
+        repeatInterval: t.repeatInterval,
+        repeatEndDate: t.repeatEndDate,
+        parentTaskId: t.parentTaskId,
+        goalId: t.goalId,
+      });
+
+      task.steps.forEach((step, index) => {
+        if (t.steps[index]?.estimatedMinutes) {
+          this.taskManager.updateStep(task.id, step.id, {
+            estimatedMinutes: t.steps[index].estimatedMinutes,
+          });
+        }
+      });
+
+      createdTasks.push(task);
+    });
+
+    return createdTasks;
+  }
+
+  batchActions(actions: UserAction[], options?: {
+    autoPlan?: boolean;
+    planDate?: Date;
+    planDays?: number;
+    generateSummary?: boolean;
+    summaryStartDate?: Date;
+    summaryEndDate?: Date;
+  }): BatchActionResult {
+    const sortedActions = [...actions].sort(
+      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    const results: BatchActionResult['results'] = [];
+    let successCount = 0;
+    let failCount = 0;
+
+    sortedActions.forEach((action, index) => {
+      try {
+        const result = this.executeAction(action);
+        results.push({
+          actionIndex: index,
+          actionType: action.type,
+          success: result.success !== false,
+          data: result.data,
+        });
+        if (result.success !== false) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+      } catch (e: any) {
+        results.push({
+          actionIndex: index,
+          actionType: action.type,
+          success: false,
+          error: e.message,
+        });
+        failCount++;
+      }
+    });
+
+    const batchResult: BatchActionResult = {
+      success: failCount === 0,
+      results,
+      totalSuccess: successCount,
+      totalFailed: failCount,
+    };
+
+    if (options?.autoPlan) {
+      const planDate = options.planDate || new Date();
+      const planDays = options.planDays || 1;
+      batchResult.finalPlan = this.plan({
+        date: planDate,
+        days: planDays,
+      });
+    }
+
+    if (options?.generateSummary) {
+      const startDate = options.summaryStartDate || startOfWeek(new Date());
+      const endDate = options.summaryEndDate || endOfWeek(new Date());
+      batchResult.summary = this.templateManager.generateExportSummary(
+        startDate,
+        endDate,
+        this.taskManager.getAllTasks(),
+        this.goalManager.getAllGoals().map((g) => ({
+          id: g.id,
+          title: g.title,
+          progress: g.progress,
+          status: g.status,
+        }))
+      );
+    }
+
+    return batchResult;
+  }
+
+  getTodayPlan(): DailyPlan {
+    const planResult = this.plan({ date: new Date(), days: 1 });
+    return planResult.dailyPlans[0];
   }
 
   getWeeklyPlan(startDate?: Date): DailyPlan[] {
     const start = startDate || new Date();
-    return this.statisticsManager.generateWeeklyPlans(
-      start,
-      this.taskManager.getAllTasks(),
-      this.calendarManager.getAllBlocks()
-    );
+    const planResult = this.plan({ date: start, days: 7 });
+    return planResult.dailyPlans;
   }
 
   getWeeklyReview(date?: Date): WeeklyReview {

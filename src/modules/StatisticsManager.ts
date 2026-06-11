@@ -1,5 +1,5 @@
-import { Task, DailyPlan, CheckInRecord, EfficiencyScore, CalendarBlock, Goal } from '../types';
-import { generateId, isSameDay, startOfDay, endOfDay, getPriorityWeight, clamp, formatDate } from '../utils';
+import { Task, DailyPlan, CheckInRecord, EfficiencyScore, CalendarBlock, Goal, Reminder, TimeConflict } from '../types';
+import { generateId, isSameDay, startOfDay, endOfDay, getPriorityWeight, clamp, formatDate, getMinutesBetween } from '../utils';
 
 export class StatisticsManager {
   private checkIns: Map<string, CheckInRecord> = new Map();
@@ -7,7 +7,14 @@ export class StatisticsManager {
   generateDailyPlan(
     date: Date,
     tasks: Task[],
-    calendarBlocks: CalendarBlock[]
+    calendarBlocks: CalendarBlock[],
+    options?: {
+      reminders?: Reminder[];
+      conflicts?: TimeConflict[];
+      suggestions?: string[];
+      workStartTime?: string;
+      workEndTime?: string;
+    }
   ): DailyPlan {
     const dayTasks = tasks.filter((t) => {
       if (t.status === 'completed' || t.status === 'cancelled') return false;
@@ -18,7 +25,27 @@ export class StatisticsManager {
 
     const dayBlocks = calendarBlocks.filter((b) => isSameDay(b.startTime, date));
 
+    const dayReminders = options?.reminders?.filter((r) => isSameDay(r.remindAt, date)) || [];
+    const dayConflicts = options?.conflicts || [];
+
     const totalEstimatedMinutes = dayTasks.reduce((sum, t) => sum + t.estimatedMinutes, 0);
+
+    const totalScheduledMinutes = dayBlocks.reduce(
+      (sum, block) => sum + getMinutesBetween(block.startTime, block.endTime),
+      0
+    );
+
+    let freeMinutes = 0;
+    if (options?.workStartTime && options?.workEndTime) {
+      const [startHour, startMin] = options.workStartTime.split(':').map(Number);
+      const [endHour, endMin] = options.workEndTime.split(':').map(Number);
+      const workStart = new Date(date);
+      workStart.setHours(startHour, startMin, 0, 0);
+      const workEnd = new Date(date);
+      workEnd.setHours(endHour, endMin, 0, 0);
+      const workMinutes = getMinutesBetween(workStart, workEnd);
+      freeMinutes = Math.max(0, workMinutes - totalScheduledMinutes);
+    }
 
     const highPriorityCount = dayTasks.filter((t) => t.priority === 'high' || t.priority === 'urgent').length;
     const focusScore = clamp(
@@ -27,12 +54,31 @@ export class StatisticsManager {
       100
     );
 
+    const suggestions: string[] = options?.suggestions ? [...options.suggestions] : [];
+
+    if (dayConflicts.length > 0) {
+      suggestions.push(`检测到 ${dayConflicts.length} 个时间冲突，建议调整日程`);
+    }
+
+    if (highPriorityCount > 5) {
+      suggestions.push('今日高优先级任务较多，注意合理分配精力');
+    }
+
+    if (freeMinutes < 60 && freeMinutes > 0) {
+      suggestions.push('今日日程较满，注意预留休息时间');
+    }
+
     return {
       date,
       tasks: dayTasks,
       calendarBlocks: dayBlocks,
+      reminders: dayReminders,
+      conflicts: dayConflicts,
       totalEstimatedMinutes,
+      totalScheduledMinutes,
+      freeMinutes,
       focusScore,
+      suggestions,
     };
   }
 

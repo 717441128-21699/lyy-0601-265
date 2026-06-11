@@ -1,8 +1,8 @@
 import { EfficiencySDK } from '../index';
-import { Priority, TaskStatus } from '../types';
+import { Priority, UserAction } from '../types';
 
 function runExample() {
-  console.log('=== 个人效率 SDK 使用示例 ===\n');
+  console.log('=== 个人效率 SDK - 增强版示例 ===\n');
 
   const sdk = new EfficiencySDK({
     workStartTime: '09:00',
@@ -12,230 +12,340 @@ function runExample() {
     reminderLeadMinutes: 15,
   });
 
-  console.log('--- 1. 创建任务 ---');
-
   const today = new Date();
   today.setHours(10, 0, 0, 0);
 
-  const task1 = sdk.tasks.createTask({
-    title: '完成项目提案',
-    description: '撰写 Q3 项目提案文档',
-    priority: 'high',
-    estimatedMinutes: 120,
-    dueDate: new Date(today.getTime() + 3 * 60 * 60 * 1000),
-    tags: ['工作', '重要'],
-    steps: ['收集资料', '撰写大纲', '填充内容', '审核修改'],
-  });
-  console.log('创建任务:', task1.title, '- 优先级:', task1.priority);
+  console.log('--- 1. 创建带完整配置的任务模板 ---');
 
-  const task2 = sdk.tasks.createTask({
-    title: '团队周会',
-    priority: 'medium',
-    estimatedMinutes: 60,
-    dueDate: new Date(today.getTime() + 5 * 60 * 60 * 1000),
-    tags: ['会议', '团队'],
-  });
-  console.log('创建任务:', task2.title, '- 优先级:', task2.priority);
-
-  const task3 = sdk.tasks.createTask({
-    title: '代码审查',
-    priority: 'urgent',
-    estimatedMinutes: 45,
-    dueDate: new Date(today.getTime() + 1 * 60 * 60 * 1000),
-    tags: ['工作', '技术'],
-  });
-  console.log('创建任务:', task3.title, '- 优先级:', task3.priority);
-
-  console.log('\n--- 2. 今日任务计划 ---');
-
-  const todayPlan = sdk.getTodayPlan();
-  console.log('今日任务数量:', todayPlan.tasks.length);
-  console.log('今日预估总耗时:', todayPlan.totalEstimatedMinutes, '分钟');
-  console.log('今日专注评分:', todayPlan.focusScore, '/ 100');
-  console.log('今日任务列表:');
-  todayPlan.tasks.forEach((t, i) => {
-    console.log(`  ${i + 1}. [${t.priority}] ${t.title} (${t.estimatedMinutes}分钟)`);
-  });
-
-  console.log('\n--- 3. 智能规划（自动排期+提醒） ---');
-
-  const planResult = sdk.plan({ date: today, days: 1 });
-  console.log('规划建议:', planResult.suggestions);
-  console.log('时间冲突:', planResult.conflicts.length, '个');
-  console.log('生成日历块:', planResult.calendarBlocks.length, '个');
-  console.log('生成提醒:', planResult.reminders.length, '个');
-
-  if (planResult.calendarBlocks.length > 0) {
-    console.log('第一个日历块:', planResult.calendarBlocks[0].title,
-      '-', planResult.calendarBlocks[0].startTime.toLocaleTimeString(),
-      '~', planResult.calendarBlocks[0].endTime.toLocaleTimeString());
-  }
-
-  console.log('\n--- 4. 时间冲突检测 ---');
-
-  const conflicts = sdk.calendar.detectConflicts();
-  console.log('检测到冲突数量:', conflicts.length);
-
-  console.log('\n--- 5. 步骤管理 ---');
-
-  console.log(`任务「${task1.title}」的步骤:`);
-  task1.steps.forEach((step, i) => {
-    console.log(`  ${i + 1}. [${step.completed ? '✓' : ' '}] ${step.title}`);
-  });
-
-  sdk.tasks.toggleStep(task1.id, task1.steps[0].id);
-  sdk.tasks.toggleStep(task1.id, task1.steps[1].id);
-
-  const progress = sdk.tasks.getTaskProgress(task1.id);
-  console.log('完成 2 个步骤后进度:', progress + '%');
-
-  console.log('\n--- 6. 标签筛选 ---');
-
-  const workTasks = sdk.getTasksByTag('工作');
-  console.log('标签为「工作」的任务数量:', workTasks.length);
-
-  const urgentTasks = sdk.getTasksByPriority('urgent');
-  console.log('紧急优先级任务数量:', urgentTasks.length);
-
-  console.log('\n--- 7. 延期任务 ---');
-
-  const deferredDate = new Date(today);
-  deferredDate.setDate(deferredDate.getDate() + 1);
-  sdk.tasks.deferTask(task2.id, deferredDate, '需要更多准备时间');
-
-  const deferredTasks = sdk.tasks.getTasksByStatus('deferred' as TaskStatus);
-  console.log('延期任务数量:', deferredTasks.length);
-  if (deferredTasks.length > 0) {
-    console.log('延期原因:', deferredTasks[0].deferRecords[0].reason);
-  }
-
-  console.log('\n--- 8. 目标管理 ---');
-
-  const goal = sdk.goals.createGoal({
-    title: 'Q3 产品发布目标',
-    description: '完成新产品的开发和发布',
-    startDate: new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000),
-    endDate: new Date(today.getTime() + 60 * 24 * 60 * 60 * 1000),
-    milestones: ['完成需求分析', '完成设计评审', '完成开发', '完成测试', '正式发布'],
-    tags: ['产品', '季度目标'],
-  });
-  console.log('创建目标:', goal.title);
-  console.log('目标里程碑数量:', goal.milestones.length);
-
-  sdk.goals.addTaskToGoal(goal.id, task1.id);
-  sdk.goals.addTaskToGoal(goal.id, task3.id);
-
-  sdk.goals.completeMilestone(goal.id, goal.milestones[0].id);
-
-  const allTasks = sdk.tasks.getAllTasks();
-  const updatedGoal = sdk.goals.recalculateProgress(goal.id, allTasks);
-  console.log('目标当前进度:', updatedGoal + '%');
-
-  console.log('\n--- 9. 完成打卡 ---');
-
-  sdk.tasks.setTaskStatus(task3.id, 'completed');
-  const checkIn = sdk.checkIn({
-    completedTasks: [task3.id],
-    completedMinutes: 40,
-    mood: 'good',
-    note: '今天效率不错！',
-  });
-  console.log('打卡记录:', checkIn.date.toLocaleDateString());
-  console.log('完成任务数:', checkIn.completedTasks.length);
-  console.log('专注分钟数:', checkIn.completedMinutes);
-
-  console.log('\n--- 10. 效率评分 ---');
-
-  const score = sdk.getEfficiencyScore();
-  console.log('今日效率评分:', score.score, '/ 100');
-  console.log('  - 任务完成率:', score.details.taskCompletion + '%');
-  console.log('  - 时间准确度:', score.details.timeAccuracy + '%');
-  console.log('  - 专注一致性:', score.details.focusConsistency + '%');
-  console.log('  - 目标进度:', score.details.goalProgress + '%');
-
-  console.log('\n--- 11. 模板管理 ---');
+  const templateDate = new Date(today);
+  templateDate.setHours(9, 0, 0, 0);
 
   const template = sdk.templates.createTemplate({
-    name: '每日晨间例行',
-    description: '每天早上的固定流程',
-    category: '日常',
+    name: '产品发布准备流程',
+    description: '产品上线前的标准检查流程',
+    category: '产品',
     tasks: [
       {
-        title: '查看邮件',
-        description: '',
-        priority: 'medium',
-        status: 'pending',
-        tags: ['日常'],
-        estimatedMinutes: 15,
-        steps: [],
-        repeatFrequency: 'none',
-      },
-      {
-        title: '规划今日任务',
-        description: '',
+        title: '需求确认与评审',
+        description: '确认所有需求点，完成评审',
         priority: 'high',
         status: 'pending',
-        tags: ['规划', '日常'],
-        estimatedMinutes: 20,
-        steps: [],
+        tags: ['产品', '需求'],
+        estimatedMinutes: 60,
+        steps: [
+          { id: 's1', title: '收集需求文档', completed: false, estimatedMinutes: 15 },
+          { id: 's2', title: '内部评审讨论', completed: false, estimatedMinutes: 30 },
+          { id: 's3', title: '整理评审意见', completed: false, estimatedMinutes: 15 },
+        ],
         repeatFrequency: 'none',
+        startDate: templateDate,
+        dueDate: new Date(templateDate.getTime() + 60 * 60 * 1000),
+        parentTaskId: undefined,
+        goalId: undefined,
       },
       {
-        title: '阅读行业资讯',
-        description: '',
-        priority: 'low',
+        title: 'UI 设计稿验收',
+        description: '验收最终设计稿',
+        priority: 'medium',
         status: 'pending',
-        tags: ['学习', '日常'],
-        estimatedMinutes: 30,
-        steps: [],
+        tags: ['设计', '产品'],
+        estimatedMinutes: 45,
+        steps: [
+          { id: 's4', title: '对照需求检查', completed: false, estimatedMinutes: 20 },
+          { id: 's5', title: '交互体验测试', completed: false, estimatedMinutes: 25 },
+        ],
         repeatFrequency: 'none',
+        startDate: new Date(templateDate.getTime() + 90 * 60 * 1000),
+        dueDate: new Date(templateDate.getTime() + 135 * 60 * 1000),
+        parentTaskId: undefined,
+        goalId: undefined,
+      },
+      {
+        title: '开发进度跟进',
+        description: '确认开发进度和风险点',
+        priority: 'high',
+        status: 'pending',
+        tags: ['技术', '产品'],
+        estimatedMinutes: 30,
+        steps: [
+          { id: 's6', title: '查看代码提交', completed: false, estimatedMinutes: 10 },
+          { id: 's7', title: '与开发沟通风险', completed: false, estimatedMinutes: 20 },
+        ],
+        repeatFrequency: 'weekly',
+        repeatInterval: 1,
+        startDate: new Date(templateDate.getTime() + 150 * 60 * 1000),
+        dueDate: new Date(templateDate.getTime() + 180 * 60 * 1000),
+        parentTaskId: undefined,
+        goalId: undefined,
+      },
+      {
+        title: '测试用例评审',
+        description: '评审测试团队提交的用例',
+        priority: 'medium',
+        status: 'pending',
+        tags: ['测试', '产品'],
+        estimatedMinutes: 90,
+        steps: [
+          { id: 's8', title: '阅读测试用例', completed: false, estimatedMinutes: 30 },
+          { id: 's9', title: '用例评审会议', completed: false, estimatedMinutes: 45 },
+          { id: 's10', title: '整理反馈意见', completed: false, estimatedMinutes: 15 },
+        ],
+        repeatFrequency: 'none',
+        startDate: new Date(templateDate.getTime() + 200 * 60 * 1000),
+        dueDate: new Date(templateDate.getTime() + 290 * 60 * 1000),
+        parentTaskId: undefined,
+        goalId: undefined,
       },
     ],
-    tags: ['日常', '晨间'],
+    tags: ['产品', '发布流程'],
   });
+
   console.log('创建模板:', template.name);
   console.log('模板包含任务数:', template.tasks.length);
+  console.log('模板标签:', template.tags);
+  console.log('各任务配置:');
+  template.tasks.forEach((t, i) => {
+    console.log(`  ${i + 1}. ${t.title}`);
+    console.log(`     - 优先级: ${t.priority}, 耗时: ${t.estimatedMinutes}分钟`);
+    console.log(`     - 步骤数: ${t.steps.length}, 重复: ${t.repeatFrequency}`);
+    console.log(`     - 标签: [${t.tags.join(', ')}]`);
+  });
 
-  console.log('\n--- 12. 周复盘 ---');
+  console.log('\n--- 2. 套用模板（验证完整保留步骤、重复、标签、相对时间） ---');
 
-  const weeklyReview = sdk.getWeeklyReview();
-  console.log('本周回顾:');
-  console.log('  时间范围:', weeklyReview.startDate.toLocaleDateString(), '-', weeklyReview.endDate.toLocaleDateString());
-  console.log('  总任务数:', weeklyReview.totalTasks);
-  console.log('  已完成:', weeklyReview.completedTasks);
-  console.log('  完成率:', weeklyReview.completionRate + '%');
-  console.log('  效率评分:', weeklyReview.efficiencyScore + '%');
-  console.log('  洞察:', weeklyReview.insights);
-  console.log('  建议:', weeklyReview.suggestions);
+  const applyDate = new Date(today);
+  applyDate.setDate(applyDate.getDate() + 1);
+  applyDate.setHours(9, 30, 0, 0);
 
-  console.log('\n--- 13. 导出摘要 ---');
+  const appliedTasks = sdk.templates.applyTemplate(template.id, applyDate, {
+    preserveRelativeTime: true,
+  });
 
-  const weekStart = new Date(today);
-  weekStart.setDate(weekStart.getDate() - weekStart.getDay() + 1);
-  const weekEnd = new Date(weekStart);
-  weekEnd.setDate(weekEnd.getDate() + 6);
+  console.log(`套用模板到 ${applyDate.toLocaleDateString()} ${applyDate.toLocaleTimeString()}`);
+  console.log('生成任务数:', appliedTasks.length);
+  console.log('任务详情（验证步骤、重复规则、标签都保留）:');
 
-  const summary = sdk.generateSummary(weekStart, weekEnd);
-  console.log('本周摘要:');
-  console.log('  任务总数:', summary.taskSummary.total);
-  console.log('  完成数:', summary.taskSummary.completed);
-  console.log('  延期数:', summary.taskSummary.deferred);
-  console.log('  亮点:', summary.highlights);
+  appliedTasks.forEach((t, i) => {
+    console.log(`  ${i + 1}. ${t.title}`);
+    console.log(`     优先级: ${t.priority} | 耗时: ${t.estimatedMinutes}分钟`);
+    console.log(`     步骤数: ${t.steps.length} (${t.steps.map(s => s.title).join(', ')})`);
+    console.log(`     重复规则: ${t.repeatFrequency}${t.repeatInterval ? ` (间隔${t.repeatInterval})` : ''}`);
+    console.log(`     标签: [${t.tags.join(', ')}]`);
+    if (t.startDate) {
+      console.log(`     开始时间: ${t.startDate.toLocaleTimeString()}`);
+    }
+    if (t.dueDate) {
+      console.log(`     截止时间: ${t.dueDate.toLocaleTimeString()}`);
+    }
+  });
 
-  const textSummary = sdk.templates.exportSummaryToText(summary);
-  console.log('\n文本格式摘要:');
-  console.log(textSummary);
+  console.log('\n--- 3. 套用模板并创建实际任务 + 自动排期 ---');
 
-  console.log('\n--- 14. 统计数据 ---');
+  const sdk2 = new EfficiencySDK({
+    workStartTime: '09:00',
+    workEndTime: '18:00',
+    reminderLeadMinutes: 10,
+  });
 
-  const stats = sdk.getStats();
-  console.log('总统计:');
-  console.log('  总任务数:', stats.totalTasks);
-  console.log('  完成率:', stats.completionRate + '%');
-  console.log('  总预估时长:', stats.totalEstimatedMinutes, '分钟');
+  sdk2.templates.createTemplate({
+    name: template.name,
+    description: template.description,
+    category: template.category,
+    tasks: template.tasks,
+    tags: template.tags,
+  });
 
-  const streak = sdk.getStreak();
-  console.log('  连续打卡天数:', streak);
+  const templateId = sdk2.templates.getAllTemplates()[0]?.id;
+
+  if (templateId) {
+    const result = sdk2.handleAction({
+      type: 'apply_template',
+      payload: {
+        templateId,
+        startDate: applyDate,
+        autoPlan: true,
+        planDays: 1,
+      },
+      timestamp: new Date(),
+    });
+
+    console.log('通过 handleAction 套用模板+自动排期:');
+    console.log('  成功:', result.success);
+    console.log('  创建任务数:', result.data?.length || 0);
+
+    if (result.data && result.data.length > 0) {
+      const firstTask = result.data[0];
+      console.log('  第一个任务步骤数:', firstTask.steps?.length || 0);
+      console.log('  第一个任务标签:', firstTask.tags?.join(', ') || '');
+      console.log('  第一个任务重复规则:', firstTask.repeatFrequency || 'none');
+    }
+  }
+
+  console.log('\n--- 4. 智能规划 - 每日计划完整信息（日历块+提醒+冲突） ---');
+
+  const planResult = sdk2.plan({
+    date: applyDate,
+    days: 1,
+    autoSchedule: true,
+    generateReminders: true,
+  });
+
+  const dayPlan = planResult.dailyPlans[0];
+
+  console.log(`日期: ${dayPlan.date.toLocaleDateString()}`);
+  console.log('  任务数量:', dayPlan.tasks.length);
+  console.log('  日历块数量:', dayPlan.calendarBlocks.length);
+  console.log('  提醒数量:', dayPlan.reminders.length);
+  console.log('  冲突数量:', dayPlan.conflicts.length);
+  console.log('  预估总耗时:', dayPlan.totalEstimatedMinutes, '分钟');
+  console.log('  已排程时长:', dayPlan.totalScheduledMinutes, '分钟');
+  console.log('  空闲时间:', dayPlan.freeMinutes, '分钟');
+  console.log('  专注评分:', dayPlan.focusScore, '/ 100');
+  console.log('  智能建议:', dayPlan.suggestions.length, '条');
+  dayPlan.suggestions.forEach((s, i) => console.log(`    ${i + 1}. ${s}`));
+
+  console.log('\n  日历块详情:');
+  dayPlan.calendarBlocks
+    .sort((a, b) => a.startTime.getTime() - b.startTime.getTime())
+    .forEach((block, i) => {
+      console.log(`    ${i + 1}. ${block.title}`);
+      console.log(`       ${block.startTime.toLocaleTimeString()} ~ ${block.endTime.toLocaleTimeString()}`);
+    });
+
+  console.log('\n  提醒详情:');
+  dayPlan.reminders
+    .sort((a, b) => a.remindAt.getTime() - b.remindAt.getTime())
+    .slice(0, 5)
+    .forEach((reminder, i) => {
+      console.log(`    ${i + 1}. ${reminder.title}`);
+      console.log(`       提醒时间: ${reminder.remindAt.toLocaleTimeString()} | 类型: ${reminder.type}`);
+    });
+
+  console.log('\n--- 5. 批量操作入口 ---');
+
+  const sdk3 = new EfficiencySDK({
+    workStartTime: '09:00',
+    workEndTime: '18:00',
+  });
+
+  const batchDate = new Date(today);
+  batchDate.setHours(14, 0, 0, 0);
+
+  const actions: UserAction[] = [
+    {
+      type: 'create_task',
+      payload: {
+        title: '整理周报',
+        priority: 'medium' as Priority,
+        estimatedMinutes: 45,
+        dueDate: batchDate,
+        tags: ['周报', '工作'],
+        steps: ['收集数据', '撰写内容', '审核发送'],
+      },
+      timestamp: new Date(today.getTime() - 1000 * 60 * 60 * 3),
+    },
+    {
+      type: 'create_task',
+      payload: {
+        title: '客户电话会议',
+        priority: 'high' as Priority,
+        estimatedMinutes: 60,
+        dueDate: new Date(batchDate.getTime() + 2 * 60 * 60 * 1000),
+        tags: ['会议', '客户'],
+      },
+      timestamp: new Date(today.getTime() - 1000 * 60 * 60 * 2),
+    },
+    {
+      type: 'complete_task',
+      payload: {
+        taskId: 'nonexistent_task',
+      },
+      timestamp: new Date(today.getTime() - 1000 * 60 * 60 * 1),
+    },
+    {
+      type: 'check_in',
+      payload: {
+        completedTasks: [],
+        completedMinutes: 120,
+        mood: 'good',
+        note: '上午效率不错',
+      },
+      timestamp: new Date(today.getTime() - 1000 * 60 * 30),
+    },
+    {
+      type: 'invalid_action_type',
+      payload: {},
+      timestamp: new Date(today.getTime() - 1000 * 60 * 10),
+    },
+  ];
+
+  const batchResult = sdk3.batchActions(actions, {
+    autoPlan: true,
+    planDate: batchDate,
+    planDays: 1,
+    generateSummary: true,
+    summaryStartDate: batchDate,
+    summaryEndDate: new Date(batchDate.getTime() + 24 * 60 * 60 * 1000),
+  });
+
+  console.log('批量操作结果:');
+  console.log('  全部成功:', batchResult.success);
+  console.log('  成功数:', batchResult.totalSuccess);
+  console.log('  失败数:', batchResult.totalFailed);
+  console.log('  各操作结果:');
+
+  batchResult.results.forEach((r, i) => {
+    console.log(`    ${i + 1}. [${r.success ? '✓' : '✗'}] ${r.actionType}`);
+    if (r.error) {
+      console.log(`       错误: ${r.error}`);
+    }
+  });
+
+  if (batchResult.finalPlan) {
+    console.log('\n  批量操作后的规划结果:');
+    const plan = batchResult.finalPlan.dailyPlans[0];
+    console.log('    任务数:', plan.tasks.length);
+    console.log('    日历块数:', plan.calendarBlocks.length);
+    console.log('    提醒数:', plan.reminders.length);
+  }
+
+  if (batchResult.summary) {
+    console.log('\n  批量操作后的摘要:');
+    console.log('    任务总数:', batchResult.summary.taskSummary.total);
+    console.log('    完成数:', batchResult.summary.taskSummary.completed);
+    console.log('    亮点:', batchResult.summary.highlights);
+  }
+
+  console.log('\n--- 6. 验证修复项 ---');
+
+  console.log('\n✅ 修复项 1 - 模板套用步骤保留:');
+  const allTemplateTasks = sdk2.tasks.getAllTasks();
+  const taskWithSteps = allTemplateTasks.find(t => t.steps.length > 0);
+  if (taskWithSteps) {
+    console.log(`   找到带步骤的任务: ${taskWithSteps.title}`);
+    console.log(`   步骤数量: ${taskWithSteps.steps.length}`);
+    taskWithSteps.steps.forEach((s, i) => {
+      console.log(`     ${i + 1}. ${s.title}${s.estimatedMinutes ? ` (${s.estimatedMinutes}分钟)` : ''}`);
+    });
+  }
+
+  console.log('\n✅ 修复项 2 - 每日计划包含排期日程:');
+  const tomorrowPlan = sdk2.getTodayPlan();
+  const nextDayPlan = planResult.dailyPlans[0];
+  console.log(`   套用模板日期的计划日历块数: ${nextDayPlan.calendarBlocks.length}`);
+  console.log(`   套用模板日期的计划提醒数: ${nextDayPlan.reminders.length}`);
+  console.log(`   套用模板日期的已排程时长: ${nextDayPlan.totalScheduledMinutes}分钟`);
+  console.log(`   套用模板日期的空闲时间: ${nextDayPlan.freeMinutes}分钟`);
+  if (nextDayPlan.calendarBlocks.length > 0) {
+    console.log('   第一个日程块:', nextDayPlan.calendarBlocks[0].title);
+    console.log('     时间:', nextDayPlan.calendarBlocks[0].startTime.toLocaleTimeString(),
+      '~', nextDayPlan.calendarBlocks[0].endTime.toLocaleTimeString());
+  }
+
+  console.log('\n✅ 修复项 3 - 批量操作入口:');
+  console.log('   batchActions 方法已实现');
+  console.log('   支持: 创建任务、延期、完成打卡、套模板等');
+  console.log('   结果包含: 各操作成功/失败状态、最终规划、摘要');
 
   console.log('\n=== 示例运行完成 ===');
 }

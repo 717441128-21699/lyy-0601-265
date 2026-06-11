@@ -1,5 +1,5 @@
-import { TaskTemplate, Task, ExportSummary, Priority } from '../types';
-import { generateId, startOfDay, endOfDay, formatDate, isSameWeek } from '../utils';
+import { TaskTemplate, Task, ExportSummary, Priority, TaskStep } from '../types';
+import { generateId, startOfDay, endOfDay, formatDate, isSameWeek, addMinutes } from '../utils';
 
 export class TemplateManager {
   private templates: Map<string, TaskTemplate> = new Map();
@@ -61,43 +61,73 @@ export class TemplateManager {
       goalId?: string;
       parentTaskId?: string;
       tagOverrides?: string[];
+      preserveRelativeTime?: boolean;
     }
   ): Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'calendarBlockIds' | 'deferRecords'>[] {
     const template = this.templates.get(templateId);
-    if (!template) return [];
+    if (!template || template.tasks.length === 0) return [];
 
-    let cumulativeMinutes = 0;
+    const preserveRelativeTime = options?.preserveRelativeTime !== false;
+
+    let referenceDate: Date | null = null;
+    if (preserveRelativeTime) {
+      for (const task of template.tasks) {
+        if (task.startDate) {
+          referenceDate = new Date(task.startDate);
+          break;
+        }
+        if (task.dueDate) {
+          referenceDate = new Date(task.dueDate);
+          break;
+        }
+      }
+    }
+
+    const offsetMinutes = referenceDate
+      ? (startDate.getTime() - referenceDate.getTime()) / (1000 * 60)
+      : 0;
 
     return template.tasks.map((taskTemplate) => {
-      const task = { ...taskTemplate };
+      const newSteps: TaskStep[] = taskTemplate.steps.map((step) => ({
+        id: generateId(),
+        title: step.title,
+        completed: false,
+        estimatedMinutes: step.estimatedMinutes,
+      }));
 
-      if (taskTemplate.dueDate) {
-        const dueDate = new Date(startDate);
-        dueDate.setMinutes(dueDate.getMinutes() + cumulativeMinutes + taskTemplate.estimatedMinutes);
-        task.dueDate = dueDate;
+      const result: Omit<Task, 'id' | 'createdAt' | 'updatedAt' | 'calendarBlockIds' | 'deferRecords'> = {
+        title: taskTemplate.title,
+        description: taskTemplate.description,
+        priority: taskTemplate.priority,
+        status: 'pending',
+        tags: options?.tagOverrides && options.tagOverrides.length > 0
+          ? options.tagOverrides
+          : [...taskTemplate.tags],
+        estimatedMinutes: taskTemplate.estimatedMinutes,
+        steps: newSteps,
+        repeatFrequency: taskTemplate.repeatFrequency,
+        repeatInterval: taskTemplate.repeatInterval,
+        repeatEndDate: taskTemplate.repeatEndDate ? new Date(taskTemplate.repeatEndDate) : undefined,
+        parentTaskId: options?.parentTaskId ?? taskTemplate.parentTaskId,
+        goalId: options?.goalId ?? taskTemplate.goalId,
+        actualMinutes: undefined,
+        completedAt: undefined,
+      };
+
+      if (preserveRelativeTime && referenceDate) {
+        if (taskTemplate.startDate) {
+          const originalOffset = (taskTemplate.startDate.getTime() - referenceDate.getTime()) / (1000 * 60);
+          result.startDate = addMinutes(startDate, originalOffset);
+        }
+        if (taskTemplate.dueDate) {
+          const originalOffset = (taskTemplate.dueDate.getTime() - referenceDate.getTime()) / (1000 * 60);
+          result.dueDate = addMinutes(startDate, originalOffset);
+        }
+      } else {
+        result.dueDate = new Date(startDate);
       }
 
-      if (taskTemplate.startDate) {
-        const start = new Date(startDate);
-        start.setMinutes(start.getMinutes() + cumulativeMinutes);
-        task.startDate = start;
-      }
-
-      cumulativeMinutes += taskTemplate.estimatedMinutes;
-
-      if (options?.goalId) {
-        task.goalId = options.goalId;
-      }
-
-      if (options?.parentTaskId) {
-        task.parentTaskId = options.parentTaskId;
-      }
-
-      if (options?.tagOverrides && options.tagOverrides.length > 0) {
-        task.tags = options.tagOverrides;
-      }
-
-      return task;
+      return result;
     });
   }
 
@@ -109,19 +139,31 @@ export class TemplateManager {
   ): TaskTemplate {
     const templateTasks = tasks.map((task) => {
       const { id, createdAt, updatedAt, calendarBlockIds, deferRecords, ...rest } = task;
+
+      const steps: TaskStep[] = task.steps.map((step) => ({
+        id: step.id,
+        title: step.title,
+        completed: false,
+        estimatedMinutes: step.estimatedMinutes,
+      }));
+
       return {
         ...rest,
-        dueDate: undefined,
-        startDate: undefined,
+        steps,
+        status: 'pending' as const,
+        completedAt: undefined,
+        actualMinutes: undefined,
       };
     });
+
+    const allTags = [...new Set(tasks.flatMap((t) => t.tags))];
 
     return this.createTemplate({
       name,
       description,
       category,
       tasks: templateTasks,
-      tags: [...new Set(tasks.flatMap((t) => t.tags))],
+      tags: allTags,
     });
   }
 
