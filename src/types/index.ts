@@ -199,6 +199,7 @@ export interface PlanningResult {
   dailyPlans: DailyPlan[];
   suggestions: string[];
   conflicts: TimeConflict[];
+  unscheduledTasks: Task[];
 }
 
 export interface TimeConflict {
@@ -220,15 +221,43 @@ export interface SDKOptions {
 
 export interface BatchActionResult {
   success: boolean;
-  results: {
-    actionIndex: number;
-    actionType: string;
-    success: boolean;
-    data?: any;
-    error?: string;
-  }[];
+  continueOnError: boolean;
+  results: BatchActionStepResult[];
   finalPlan?: PlanningResult;
   summary?: ExportSummary;
+  taskChanges: TaskChangeSummary;
   totalSuccess: number;
   totalFailed: number;
+}
+
+export interface BatchActionStepResult {
+  actionIndex: number;
+  actionType: string;
+  success: boolean;
+  data?: any;
+  error?: string;
+  skipped?: boolean;
+  skipReason?: string;
+}
+
+export interface TaskChangeSummary {
+  created: { taskId: string; title: string }[];
+  completed: { taskId: string; title: string }[];
+  deferred: { taskId: string; title: string; deferredTo: Date }[];
+  scheduled: { taskId: string; title: string; blockId: string; startTime: Date }[];
+  templateApplied: { templateId: string; taskIds: string[] }[];
+}
+
+export interface PreviewResult {
+  plan: PlanningResult;
+  batchResult?: BatchActionResult;
+  committed: boolean;
+  snapshot: SDKSnapshot;
+}
+
+export interface SDKSnapshot {
+  tasks: Task[];
+  calendarBlocks: CalendarBlock[];
+  reminders: Reminder[];
+  goals: Goal[];
 }
